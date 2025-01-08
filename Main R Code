@@ -1,0 +1,116 @@
+library(pROC)
+library('corrr')
+library(ggcorrplot)
+library("FactoMineR")
+library(caret)
+library(class)
+library(dplyr)
+library(tidyverse)
+library(readr)
+library(e1071)
+library(caTools)
+library(rpart)
+library(rpart.plot)
+
+url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data"
+
+adult_data <- read_csv(url, col_names = FALSE)
+
+adult_data <- adult_data %>% rename(Age = X1, Workclass = X2, fnlwgt = X3, 
+                                    Education = X4, Education_Length = X5, 
+                                    Marital_Status = X6, Occupation = X7, 
+                                    Relationship = X8, Race = X9, 
+                                    Sex = X10, Capital_Gain = X11, 
+                                    Capital_Loss = X12, Hours_Per_Week = X13,
+                                    Native_Country = X14, Income = X15
+                                    )
+
+head(adult_data)
+
+sum(is.na(adult_data))
+
+adult_data <- adult_data %>% filter(if_any(everything(), ~ . != "?"))
+
+summary(adult_data)
+
+colSums(is.na(adult_data))
+
+numeric_data <- adult_data %>% select(Age, fnlwgt, Education_Length, Hours_Per_Week, Capital_Gain, Capital_Loss)
+categorical_data <- adult_data %>% select(Workclass, Education, Marital_Status, Occupation, 
+                                          Relationship, Race, Sex, Native_Country, Income)
+numerica_data <- as.data.frame(numeric_data)
+#dummy_model <- dummyVars(~ ., data = adult_data)
+#adult_data_dummy <- predict(dummy_model, newdata = adult_data)
+#adult_data_dummy <- as.data.frame(adult_data_dummy)
+
+#preproc <- preProcess(adult_data_dummy, method = c("range"))
+
+#adult_data_normalized <- predict(preproc, adult_data_dummy)
+numeric_data_normalized <- scale(numeric_data)
+data.pca <- princomp(numeric_data_normalized)
+summary(data.pca)
+
+adult_data <- as.data.frame(adult_data)
+knn_dataset <- adult_data %>% select(Age, Hours_Per_Week, Education_Length, Income)
+knn_dataset <- as.data.frame(knn_dataset)
+split <- sample.split(knn_dataset, SplitRatio = 0.8)
+train_cl <- subset(knn_dataset, split == TRUE)
+test_cl <- subset(knn_dataset, split == FALSE)
+train_scale <- scale(train_cl[1:3])
+test_scale <- scale(test_cl[1:3])
+classifier_knn <- knn(train = train_scale, test = test_scale, cl = train_cl$Income, k = 6)
+cm <- table(test_cl$Income, classifier_knn)
+cm
+misClassError <- mean(classifier_knn != test_cl$Income)
+print(paste("Accuracy =", 1 - misClassError))
+test_cl$Income_num <- ifelse(test_cl$Income == ">50K", 1, 0)
+roc_curve <- roc(test_cl$Income_num, as.numeric(classifier_knn))
+plot(roc_curve, col = "blue", lwd = 2, main = "ROC Curve")
+
+df_tree <- adult_data
+df_tree$Workclass <- as.factor(df_tree$Workclass)
+df_tree$Education <- as.factor(df_tree$Education)
+df_tree$Marital_Status <- as.factor(df_tree$Marital_Status)
+df_tree$Occupation <- as.factor(df_tree$Occupation)
+df_tree$Relationship <- as.factor(df_tree$Relationship)
+df_tree$Race <- as.factor(df_tree$Race)
+df_tree$Sex <- as.factor(df_tree$Sex)
+df_tree$Native_Country <- as.factor(df_tree$Native_Country)
+df_tree$Income <- as.factor(df_tree$Income)
+
+trainIndex <- createDataPartition(df_tree$Income, p = 0.8, list = FALSE, times = 1)
+df_tree_train <- df_tree[trainIndex,]
+df_tree_test <- df_tree[-trainIndex,]
+dt_model <- rpart(Income ~., data = df_tree_train, method = "class")
+rpart.plot(dt_model)
+predictions <- predict(dt_model, df_tree_test, type = "class")
+cm <- table(predictions, df_tree_test$Income)
+cm
+
+df_naive <- adult_data %>%
+    mutate(across(where(is.character), as.factor))
+set.seed(123)
+naive_index <- createDataPartition(df_naive$Income, p = 0.7, list = FALSE)
+naive_train <- df_naive[naive_index, ]
+naive_test <- df_naive[-naive_index, ]
+naive_model <- naiveBayes(Income ~ ., data = naive_train)
+naive_pred <- predict(naive_model, naive_test)
+naive_conf_matrix <- confusionMatrix(naive_pred, naive_test$Income)
+naive_conf_matrix
+
+naive_acc <- naive_conf_matrix$overall['Accuracy']
+naive_acc
+
+svm_df <- adult_data
+svm_df$Income <- as.factor(svm_df$Income)
+set.seed(123)
+svm_index <- createDataPartition(svm_df$Income, p = 0.7, list = FALSE)
+svm_train <- svm_df[svm_index, ]
+svm_test <- svm_df[-svm_index, ]
+
+svm_model <- svm(Income ~ ., data = svm_train, kernel = "radial", cost = 1, scale = TRUE)
+svm_pred <- predict(svm_model, newdata = svm_test)
+svm_conf <- confusionMatrix(svm_pred, svm_test$Income)
+svm_conf
+acc <- svm_conf$overall['Accuracy']
+acc
